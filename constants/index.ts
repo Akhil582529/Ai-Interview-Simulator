@@ -1,0 +1,25 @@
+export const dummyData = [
+  {
+    id: "1",
+    userId: "user1",
+    role:" Software Engineer",
+    type: "technical",
+    techstack: ["JavaScript", "React"],
+    level: "junior",
+    questions: ["What is React?", "Explain closures in JavaScript."],
+    feedback: ["Great understanding of React components."],
+    finalized: false,
+    createdAt: "2023-10-01",
+  },
+  {
+    id: "2",
+    userId: "user2",
+    role:" Full Stack Developer",
+    type: "Mixed",
+    techstack: ["Express", "Node.js", "MongoDB"],
+    level: "Senior",
+    questions: ["What is middleware in Express?"],
+    finalized: false,
+    createdAt: "2023-10-05",
+    },
+];
