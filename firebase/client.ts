@@ -5,13 +5,13 @@ import { getFirestore } from "firebase/firestore";
 
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAIrM_HspwzhmBhJl3qAaBxPXXoujIIagw",
+  apiKey: process.env.FIREBASE_API_KEY,
   authDomain: "ai-interview-sims.firebaseapp.com",
   projectId: "ai-interview-sims",
   storageBucket: "ai-interview-sims.firebasestorage.app",
-  messagingSenderId: "493862934803",
-  appId: "1:493862934803:web:8124f2bc8a629c5b3e22e6",
-  measurementId: "G-D72JHF4LKC"
+  messagingSenderId: process.env.FIREBASE_MESSAGING_ID,
+  appId: process.env.FIREBASE_APP_ID,
+  measurementId: process.env.FIREBASE_MEASUREMENT_ID
 };
 
 // Initialize Firebase
