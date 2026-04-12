@@ -1,245 +1,173 @@
-// app/api/analyze-resume/route.ts
-
 import { NextRequest, NextResponse } from 'next/server';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { writeFile } from 'fs/promises';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 interface ResumeAnalysisResult {
   success: boolean;
   job_titles?: string[];
   extracted_skills?: string[];
   error?: string;
-  debug?: any;
+  serverless?: boolean;
 }
 
 export async function POST(request: NextRequest) {
   console.log('🚀 Resume analysis API called');
 
+  // ── Vercel / serverless check ─────────────────────────────────────────────
+  const isServerless =
+    process.env.VERCEL === '1' ||
+    process.env.AWS_LAMBDA_FUNCTION_NAME !== undefined ||
+    process.env.NETLIFY === 'true';
+
+  if (isServerless) {
+    return NextResponse.json({
+      success: false,
+      serverless: true,
+      error: 'Resume analysis is not available in the deployed version. Please enter your role and skills manually.',
+    }, { status: 503 });
+  }
+
   try {
-    // Parse form data
-    console.log('📝 Parsing form data...');
     const formData = await request.formData();
     const file = formData.get('resume') as File;
 
     if (!file) {
-      console.log('❌ No file uploaded');
-      return NextResponse.json(
-        { success: false, error: 'No file uploaded' },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: 'No file uploaded' }, { status: 400 });
     }
 
-    console.log('📄 File received:', file.name, 'Type:', file.type, 'Size:', file.size);
-
-    // Validate file type
     const validTypes = [
-      'application/pdf', 
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 
-      'text/plain'
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain',
     ];
-    
+
     if (!validTypes.includes(file.type)) {
-      console.log('❌ Invalid file type:', file.type);
       return NextResponse.json(
         { success: false, error: `Invalid file type: ${file.type}. Please upload PDF, DOCX, or TXT files only.` },
         { status: 400 }
       );
     }
 
-    // Create temp directory
-    console.log('📁 Setting up temp directory...');
     const tempDir = path.join(process.cwd(), 'temp');
-    if (!fs.existsSync(tempDir)) {
-      console.log('📁 Creating temp directory...');
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
-    // Save file
-    console.log('💾 Saving uploaded file...');
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
     const tempFilePath = path.join(tempDir, `${Date.now()}-${file.name}`);
     await writeFile(tempFilePath, buffer);
-    console.log('✅ File saved to:', tempFilePath);
 
     try {
-      // Check if required files exist
-      console.log('🔍 Checking required files...');
-      const pythonDir = path.join(process.cwd(), 'python');
-      const csvPath = path.join(process.cwd(), 'data', 'IT_Job_Roles_Skills.csv');
+      const pythonDir  = path.join(process.cwd(), 'python');
+      const csvPath    = path.join(process.cwd(), 'data', 'IT_Job_Roles_Skills.csv');
       const wrapperScript = path.join(pythonDir, 'analyze_wrapper.py');
-      
-      console.log('Python directory:', pythonDir, 'Exists:', fs.existsSync(pythonDir));
-      console.log('CSV file:', csvPath, 'Exists:', fs.existsSync(csvPath));
-      console.log('Wrapper script:', wrapperScript, 'Exists:', fs.existsSync(wrapperScript));
 
-      if (!fs.existsSync(pythonDir)) {
-        throw new Error('Python directory not found. Make sure the python folder exists.');
-      }
+      if (!fs.existsSync(pythonDir)) throw new Error('Python directory not found.');
+      if (!fs.existsSync(csvPath))   throw new Error('CSV file not found. Make sure IT_Job_Roles_Skills.csv is in the data folder.');
 
-      if (!fs.existsSync(csvPath)) {
-        throw new Error('CSV file not found. Make sure IT_Job_Roles_Skills.csv is in the data folder.');
-      }
-
-      // Create wrapper script if it doesn't exist
       if (!fs.existsSync(wrapperScript)) {
-        console.log('📝 Creating Python wrapper script...');
         const wrapperContent = `#!/usr/bin/env python3
-import sys
-import json
-import os
-
-# Add current directory to Python path
+import sys, json, os
 sys.path.append(os.path.dirname(__file__))
-
 try:
     from resume_analyzer import ResumeAnalyzer
     import pdfparser
-    
     def main():
         if len(sys.argv) != 3:
-            print(json.dumps({"success": False, "error": "Invalid arguments"}))
-            sys.exit(1)
-        
-        file_path = sys.argv[1]
-        filename = sys.argv[2]
-        
+            print(json.dumps({"success": False, "error": "Invalid arguments"})); sys.exit(1)
+        file_path, filename = sys.argv[1], sys.argv[2]
         try:
-            # Read file content
-            with open(file_path, 'rb') as f:
-                file_content = f.read()
-            
-            print(f"Processing file: {filename}", file=sys.stderr)
-            print(f"File size: {len(file_content)} bytes", file=sys.stderr)
-            
-            # Extract skills
+            with open(file_path, 'rb') as f: file_content = f.read()
             skills, text = pdfparser.skills_extraction_from_uploaded_file(file_content, filename)
-            print(f"Extracted {len(skills)} skills", file=sys.stderr)
-            
             if not skills:
-                print(json.dumps({"success": False, "error": "No recognizable skills found in the resume"}))
-                sys.exit(1)
-            
-            # Use absolute path for CSV
-            csv_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'IT_Job_Roles_Skills.csv')
-            csv_path = os.path.abspath(csv_path)
-            print(f"Using CSV: {csv_path}", file=sys.stderr)
-            
+                print(json.dumps({"success": False, "error": "No recognizable skills found"})); sys.exit(1)
+            csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data', 'IT_Job_Roles_Skills.csv'))
             if not os.path.exists(csv_path):
-                print(json.dumps({"success": False, "error": f"CSV not found: {csv_path}"}))
-                sys.exit(1)
-            
-            # Analyze resume
+                print(json.dumps({"success": False, "error": f"CSV not found: {csv_path}"})); sys.exit(1)
             analyzer = ResumeAnalyzer(csv_path)
-            top_matches = analyzer.top_job_roles(skills, top_n=5, threshold=0.1)
-            job_titles = [title for title, _ in top_matches]
-            
-            print(f"Found {len(job_titles)} job matches", file=sys.stderr)
-            
-            result = {
-                "success": True,
-                "job_titles": job_titles,
-                "extracted_skills": skills
-            }
-            
-            print(json.dumps(result))
-            
+            top_matches = analyzer.top_job_roles(skills, top_n=10, threshold=0.1)
+            print(json.dumps({"success": True, "job_titles": [t for t,_ in top_matches], "extracted_skills": skills}))
         except Exception as e:
             import traceback
-            print(json.dumps({
-                "success": False, 
-                "error": str(e),
-                "traceback": traceback.format_exc()
-            }))
-            sys.exit(1)
-
-    if __name__ == "__main__":
-        main()
-
+            print(json.dumps({"success": False, "error": str(e), "traceback": traceback.format_exc()})); sys.exit(1)
+    if __name__ == "__main__": main()
 except ImportError as e:
-    print(json.dumps({"success": False, "error": f"Dependencies not installed: {str(e)}"}))
-    sys.exit(1)
+    print(json.dumps({"success": False, "error": f"Dependencies not installed: {str(e)}"})); sys.exit(1)
 `;
         fs.writeFileSync(wrapperScript, wrapperContent);
         fs.chmodSync(wrapperScript, '755');
-        console.log('✅ Wrapper script created');
       }
 
-      // Call Python script
-      console.log('🔬 Starting resume analysis...');
       const result = await callPythonScript(wrapperScript, tempFilePath, file.name);
-      
-      // Clean up temp file
-      console.log('🗑️ Cleaning up temp file...');
-      if (fs.existsSync(tempFilePath)) {
-        fs.unlinkSync(tempFilePath);
+      if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+
+      if (result.success && result.job_titles && result.job_titles.length > 0) {
+        result.job_titles = deduplicateTitles(result.job_titles).slice(0, 5);
       }
 
-      console.log('✅ Analysis complete:', result);
       return NextResponse.json(result);
 
     } catch (error) {
-      console.error('❌ Analysis error:', error);
-      // Clean up temp file on error
-      if (fs.existsSync(tempFilePath)) {
-        fs.unlinkSync(tempFilePath);
-      }
+      if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
       throw error;
     }
 
-  } catch (error: any) {
-    console.error('💥 Server error:', error);
-    return NextResponse.json(
-      { 
-        success: false, 
-        error: error.message || 'Internal server error',
-      },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    console.error('💥 Server error:', message);
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }
 
+// ── Deduplication ─────────────────────────────────────────────────────────────
+function normaliseTitle(title: string): string {
+  return title.toLowerCase()
+    .replace(/\bjr\.?\b/g, 'junior').replace(/\bsr\.?\b/g, 'senior')
+    .replace(/\bnew\s+grad\b/g, 'junior').replace(/\bentry[\s-]?level\b/g, 'junior')
+    .replace(/\bsoftware\s+(engineer|developer|programmer)\b/g, 'developer')
+    .replace(/\b(engineer|programmer|coder)\b/g, 'developer')
+    .replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function similarity(a: string, b: string): number {
+  const setA = new Set(a.split(' ')), setB = new Set(b.split(' '));
+  const intersection = [...setA].filter(w => setB.has(w)).length;
+  const union = new Set([...setA, ...setB]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
+function deduplicateTitles(titles: string[], threshold = 0.6): string[] {
+  const kept: string[] = [], normKept: string[] = [];
+  for (const title of titles) {
+    const norm = normaliseTitle(title);
+    if (!normKept.some(e => similarity(e, norm) >= threshold)) {
+      kept.push(title); normKept.push(norm);
+    }
+  }
+  return kept;
+}
+
+// ── Python subprocess ─────────────────────────────────────────────────────────
 function callPythonScript(scriptPath: string, filePath: string, filename: string): Promise<ResumeAnalysisResult> {
   return new Promise((resolve, reject) => {
-    console.log('🐍 Calling Python script:', scriptPath);
-    const pythonProcess = spawn('python3', [scriptPath, filePath, filename]);
-
-    let output = '';
-    let errorOutput = '';
-
-    pythonProcess.stdout.on('data', (data) => {
-      output += data.toString();
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-      errorOutput += data.toString();
-    });
-
-    pythonProcess.on('close', (code) => {
-      console.log('🐍 Python process closed with code:', code);
-      console.log('📤 Python stdout:', output);
-      console.log('📤 Python stderr:', errorOutput);
-
+    const proc = spawn('python3', [scriptPath, filePath, filename]);
+    let out = '', err = '';
+    proc.stdout.on('data', d => { out += d.toString(); });
+    proc.stderr.on('data', d => { err += d.toString(); });
+    proc.on('close', code => {
       if (code === 0) {
         try {
-          // Extract just the JSON part (the last line should be the JSON result)
-          const lines = output.trim().split('\n');
-          const jsonLine = lines[lines.length - 1];
-          const result = JSON.parse(jsonLine);
-          resolve(result);
-        } catch (e) {
-          console.log('Raw Python output:', output);
-          reject(new Error(`Failed to parse Python output: ${output}`));
-        }
+          const lines = out.trim().split('\n');
+          resolve(JSON.parse(lines[lines.length - 1]));
+        } catch { reject(new Error(`Failed to parse Python output: ${out}`)); }
       } else {
-        reject(new Error(`Python script failed with code ${code}. Error: ${errorOutput}`));
+        reject(new Error(`Python script failed (code ${code}): ${err}`));
       }
     });
-
-    pythonProcess.on('error', (error) => {
-      reject(new Error(`Failed to start Python process: ${error.message}`));
-    });
+    proc.on('error', e => reject(new Error(`Failed to start Python: ${e.message}`)));
   });
 }
