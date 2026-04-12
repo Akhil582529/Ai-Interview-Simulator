@@ -4,6 +4,7 @@ import { isAuthenticated } from '@/lib/actions/auth.action'
 import { is } from 'zod/locales'
 import { redirect } from 'next/navigation'
 
+export const dynamic = 'force-dynamic'; 
 
 const RootLayout = async ({children} : {children : ReactNode}) => {
   
